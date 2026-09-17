@@ -3,6 +3,7 @@ import pickle
 from datetime import datetime
 from ml_trainer import BridgeDigitalTwin
 
+
 class BridgePerformanceTrainer:
     def __init__(self, model_path="trained_model.pkl"):
         self.model_path = model_path
@@ -23,19 +24,19 @@ class BridgePerformanceTrainer:
         if features.empty:
             print("No features to train on.")
             return
-        
+
         avg_level = features['contract_level'].mean()
         declarer_ratio = features['is_declarer'].mean()
-        
+
         self.weights = {
             'avg_level': float(avg_level),
             'declarer_ratio': float(declarer_ratio),
-            'trained_at': datetime.now().isoformat()
+            'trained_at': datetime.now().isoformat(),
         }
-        
+
         with open(self.model_path, 'wb') as f:
             pickle.dump(self.weights, f)
-            
+
         print(f"Training completed successfully. Weights saved: {self.weights}")
 
     def generate_html_summary(self, df_boards=None):
@@ -47,31 +48,39 @@ class BridgePerformanceTrainer:
         twin.train(df_boards)
         ml_insights = twin.generate_ml_insights(df_boards)
 
-        if isinstance(ml_insights, dict):
-            patterns_html = ""
-            for pattern in ml_insights.get('patterns', []):
-                patterns_html += f"<li style='margin-bottom: 6px;'>{pattern}</li>"
+        if not isinstance(ml_insights, dict):
+            return ""
 
-            ml_html_block = f"""
-            <div style="background-color: #1e1e2e; color: #cdd6f4; padding: 20px; border-radius: 10px; margin-top: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #45475a; text-align: left; direction: ltr;">
-                <h3 style="color: #89b4fa; margin-top: 0; font-size: 1.25em;">🤖 Digital Twin & Behavioral ML Insights</h3>
-                <p style="font-size: 1.0em; margin-bottom: 12px;"><strong>The Machine Learning model analyzed your gameplay against Double Dummy Solver (DDS) optimal baselines:</strong></p>
-                
-                <ul style="line-height: 1.8; font-size: 0.95em; margin-bottom: 15px;">
-                    <li><strong>Model Accuracy Score:</strong> <span style="color: #a6e3a1; font-weight: bold;">{ml_insights['accuracy']}</span></li>
-                    <li><strong>Primary Risk Predictor:</strong> <span style="color: #f38ba8; font-weight: bold;">{ml_insights['top_feature']}</span></li>
-                </ul>
+        qa_list = ml_insights.get('qa') or []
+        if not qa_list:
+            return ""
 
-                <h4 style="color: #f9e2af; margin-bottom: 8px; font-size: 1.05em;">📊 Detected Behavioral Patterns & Outliers:</h4>
-                <ul style="line-height: 1.7; color: #bac2de; font-size: 0.95em;">
-                    {patterns_html if patterns_html else "<li>No critical systematic anomalies detected in the current board set.</li>"}
-                </ul>
-
-                <p style="font-size: 0.85em; color: #a6adc8; margin-top: 15px; border-top: 1px solid #313244; padding-top: 10px;">
-                    <em>* The Digital Twin benchmarks actual trick results against DDS analysis to identify systematic decision-making biases.</em>
-                </p>
+        qa_html = ""
+        for i, item in enumerate(qa_list, 1):
+            q = item.get('q', '')
+            a = item.get('a', '')
+            qa_html += f"""
+            <div style="margin-bottom: 18px; padding: 14px 16px; background: #313244; border-radius: 8px; border-left: 4px solid #89b4fa;">
+                <div style="color: #89b4fa; font-weight: 600; font-size: 1.02em; margin-bottom: 8px;">
+                    Q{i}. {q}
+                </div>
+                <div style="color: #cdd6f4; font-size: 0.95em; line-height: 1.65;">
+                    {a}
+                </div>
             </div>
             """
-            return ml_html_block
-        
-        return ""
+
+        ml_html_block = f"""
+        <div style="background-color: #1e1e2e; color: #cdd6f4; padding: 22px; border-radius: 10px; margin-top: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #45475a; text-align: left; direction: ltr;">
+            <h3 style="color: #89b4fa; margin-top: 0; font-size: 1.3em;">🎯 Coaching Insights vs Double Dummy</h3>
+            <p style="font-size: 0.95em; color: #bac2de; margin-bottom: 18px;">
+                Answers based on your actual results compared to double-dummy optimal play (DDS).
+                Positive gap = tricks lost relative to perfect double-dummy play.
+            </p>
+            {qa_html}
+            <p style="font-size: 0.8em; color: #6c7086; margin-top: 12px; border-top: 1px solid #313244; padding-top: 10px;">
+                Analysis uses only boards where both your result and a DDS baseline are available.
+            </p>
+        </div>
+        """
+        return ml_html_block
