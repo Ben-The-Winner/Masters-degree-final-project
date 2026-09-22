@@ -224,9 +224,34 @@ initialize_dds_cache()
 def normalize_hebrew(s):
     if not s:
         return ""
-    s = re.sub(r"[^א-ת\s]", "", s)
+    # Keep Hebrew letters, Latin letters, digits and spaces (for mixed names / IBFN text)
+    s = re.sub(r"[^\u0590-\u05FFa-zA-Z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
-    return s.strip()
+    return s.strip().lower()
+
+
+def player_name_matches(query, names_field):
+    """
+    Match player query against a pair's <names> field.
+    Accepts both "Last First" and "First Last" (and multi-token queries).
+    XML format is typically: "משפחה פרטי - משפחה פרטי"
+    """
+    q = normalize_hebrew(query or "")
+    n = normalize_hebrew(names_field or "")
+    if not q or not n:
+        return False
+    # Exact substring (covers "Last First" as stored)
+    if q in n:
+        return True
+    parts = [p for p in q.split() if p]
+    if len(parts) >= 2:
+        # Reversed full query: "First Last" -> "Last First"
+        if " ".join(reversed(parts)) in n:
+            return True
+        # All tokens appear somewhere in the names string (order-independent)
+        if all(p in n for p in parts):
+            return True
+    return False
 
 
 # === PLAYER ANALYSIS WRAPPER ===
@@ -410,7 +435,7 @@ def run_analysis_for_player(player_identifier):
             rank = pair.findtext("rank")
             score = pair.findtext("restot")
 
-            if target_name_norm and target_name_norm in normalize_hebrew(names):
+            if target_name and player_name_matches(target_name, names):
                 found_player = True
             elif target_ibfn and (target_ibfn in ibfn1 or target_ibfn in ibfn2):
                 found_player = True
@@ -585,87 +610,96 @@ def run_analysis_for_player(player_identifier):
     def plot_comparison(categories, player_vals, field_vals, dds_vals, title, filename, ylabel="", show_dds=True):
         x = np.arange(len(categories))
         width = 0.25
-        plt.figure(figsize=(10, 6))
-        
-        # Replace NaN with 0 for display
+
+        fig, ax = plt.subplots(figsize=(10, 5.5))
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#1e1e2e')
+
         player_vals = [v if not np.isnan(v) else 0 for v in player_vals]
         field_vals = [v if not np.isnan(v) else 0 for v in field_vals]
-        
+
         if show_dds and len(dds_vals) == len(categories):
             dds_vals = [v if not np.isnan(v) else 0 for v in dds_vals]
         else:
-            dds_vals = []  # prevent plotting DDS when not needed
+            dds_vals = []
 
-        # Plot bars
-        bars1 = plt.bar(x - width, player_vals, width, label="Player", color='#2E86AB', alpha=0.8)
-        bars2 = plt.bar(x, field_vals, width, label="Field", color='#A23B72', alpha=0.8)
-        
+        bars1 = ax.bar(x - width, player_vals, width, label="Player", color='#89b4fa', alpha=0.95, edgecolor='none')
+        bars2 = ax.bar(x, field_vals, width, label="Field", color='#f5c2e7', alpha=0.95, edgecolor='none')
         bars3 = []
         if show_dds and dds_vals:
-            bars3 = plt.bar(x + width, dds_vals, width, label="DDS Optimal", color='#F18F01', alpha=0.8)
-        
-        plt.xticks(x, categories, rotation=45)
-        plt.title(title, fontsize=14, fontweight='bold')
-        plt.ylabel(ylabel)
-        plt.legend()
-        plt.grid(axis='y', alpha=0.3)
-        
-        # Annotate values on bars
+            bars3 = ax.bar(x + width, dds_vals, width, label="DDS Optimal", color='#a6e3a1', alpha=0.95, edgecolor='none')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(categories, rotation=20, ha='right', color='#cdd6f4')
+        ax.set_title(title, fontsize=14, fontweight='bold', color='#cdd6f4', pad=12)
+        ax.set_ylabel(ylabel, color='#a6adc8')
+        ax.tick_params(colors='#a6adc8')
+        for spine in ax.spines.values():
+            spine.set_color('#45475a')
+        ax.yaxis.grid(True, color='#313244', linestyle='--', alpha=0.8)
+        ax.set_axisbelow(True)
+        ax.legend(facecolor='#313244', edgecolor='#45475a', labelcolor='#cdd6f4')
+
         for bars, vals in [(bars1, player_vals), (bars2, field_vals), (bars3, dds_vals)]:
             for bar, val in zip(bars, vals):
                 height = bar.get_height()
-                plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                        f'{val:.2f}', ha='center', va='bottom', fontsize=9)
-        
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{val:.2f}', ha='center', va='bottom', fontsize=9, color='#cdd6f4')
+
         path = os.path.join(plot_dir, filename)
         plt.tight_layout()
-        plt.savefig(path, bbox_inches="tight", dpi=300)
+        plt.savefig(path, bbox_inches="tight", dpi=160, facecolor=fig.get_facecolor())
         plt.close()
-        
-        # FIXED: Convert to relative web path for HTML
+
         relative_path = os.path.relpath(path, os.path.join(os.path.dirname(__file__), "static"))
         return f'/static/{relative_path}'
 
     def plot_yearly_trend(df, year_col, value_col, title, filename, ylabel):
         """Creates a line graph that shows improvement over years"""
-        plt.figure(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(10, 5.5))
+        fig.patch.set_facecolor('#1e1e2e')
+        ax.set_facecolor('#1e1e2e')
 
-        # Ensure year column is numeric
         df = df.dropna(subset=[year_col, value_col]).copy()
         if df.empty:
             print(f"No yearly data available for {title}")
             plt.close()
             return None
-            
+
         df[year_col] = df[year_col].astype(int)
-
         yearly_avg = df.groupby(year_col)[value_col].mean().reset_index()
-
         if yearly_avg.empty:
             print(f"No yearly data available for {title}")
             plt.close()
             return None
 
-        plt.plot(yearly_avg[year_col], yearly_avg[value_col], marker='o', linewidth=2, 
-                color='#2E86AB', markersize=8, label='Player Performance')
-        
-        # Add value labels on points
+        ax.plot(
+            yearly_avg[year_col], yearly_avg[value_col],
+            marker='o', linewidth=2.5, color='#89b4fa', markersize=9,
+            markerfacecolor='#cba6f7', markeredgecolor='#89b4fa', label='Player Performance',
+        )
+        ax.fill_between(yearly_avg[year_col], yearly_avg[value_col], alpha=0.15, color='#89b4fa')
+
         for _, row in yearly_avg.iterrows():
-            plt.text(row[year_col], row[value_col], f'{row[value_col]:.2f}', 
-                    ha='center', va='bottom', fontsize=9)
-        
-        plt.title(f"{title} Over the Years", fontsize=14, fontweight='bold')
-        plt.xlabel("Year", fontsize=12)
-        plt.ylabel(ylabel, fontsize=12)
-        plt.xticks(yearly_avg[year_col])
-        plt.grid(True, alpha=0.3)
-        plt.legend()
+            ax.text(row[year_col], row[value_col], f'{row[value_col]:.2f}',
+                    ha='center', va='bottom', fontsize=9, color='#cdd6f4')
+
+        ax.set_title(f"{title} Over the Years", fontsize=14, fontweight='bold', color='#cdd6f4', pad=12)
+        ax.set_xlabel("Year", fontsize=12, color='#a6adc8')
+        ax.set_ylabel(ylabel, fontsize=12, color='#a6adc8')
+        ax.set_xticks(yearly_avg[year_col])
+        ax.tick_params(colors='#a6adc8')
+        for spine in ax.spines.values():
+            spine.set_color('#45475a')
+        ax.grid(True, color='#313244', linestyle='--', alpha=0.8)
+        ax.set_axisbelow(True)
+        ax.legend(facecolor='#313244', edgecolor='#45475a', labelcolor='#cdd6f4')
 
         path = os.path.join(plot_dir, filename)
         plt.tight_layout()
-        plt.savefig(path, bbox_inches="tight", dpi=300)
+        plt.savefig(path, bbox_inches="tight", dpi=160, facecolor=fig.get_facecolor())
         plt.close()
-        
+
         relative_path = os.path.relpath(path, os.path.join(os.path.dirname(__file__), "static"))
         return f'/static/{relative_path}'
 
@@ -1058,36 +1092,46 @@ def run_analysis_for_player(player_identifier):
     html_content = f"""<!DOCTYPE html>
     <html><head><meta charset='utf-8'><title>Stats for Player {target_name}</title>
     <style>
-    body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }}
-    h1 {{ color: #2c3e50; text-align: center; margin-bottom: 30px; }}
-    h2 {{ color: #34495e; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; margin-top: 30px; }}
-    p {{ line-height: 1.6; margin: 10px 0; }}
-    img {{ display: block; margin: 20px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-    .debug {{ background-color: #fff3cd; padding: 10px; border-radius: 4px; margin: 10px 0; font-size: 0.9em; }}
-    form {{ text-align: center; margin-bottom: 25px; }}
-    input, button {{ padding: 6px 10px; font-size: 1em; }}
-    #status {{ color: #555; font-style: italic; margin-top: 10px; }}
+    body {{
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      margin: 0; padding: 24px 16px 48px;
+      background: linear-gradient(180deg, #11111b 0%, #1e1e2e 40%, #181825 100%);
+      color: #cdd6f4; min-height: 100vh;
+    }}
+    h1 {{
+      color: #cdd6f4; text-align: center; margin: 8px 0 28px;
+      font-size: 1.75em; font-weight: 700; letter-spacing: -0.02em;
+    }}
+    h2 {{
+      color: #89b4fa; border-bottom: 1px solid #313244;
+      padding-bottom: 10px; margin-top: 36px; font-size: 1.2em;
+    }}
+    p {{ line-height: 1.65; margin: 10px 0; color: #bac2de; }}
+    img {{
+      display: block; margin: 20px auto; max-width: 100%;
+      border: 1px solid #313244; border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }}
+    .debug {{
+      background: #313244; color: #a6adc8; padding: 12px 14px;
+      border-radius: 8px; margin: 12px auto; font-size: 0.85em;
+      border: 1px solid #45475a; max-width: 900px;
+    }}
+    form {{ text-align: center; margin-bottom: 28px; }}
+    input, button {{
+      padding: 10px 14px; font-size: 1em; border-radius: 8px; border: 1px solid #45475a;
+    }}
+    input {{ background: #313244; color: #cdd6f4; width: min(280px, 80vw); }}
+    button {{
+      background: linear-gradient(135deg, #89b4fa, #cba6f7); color: #1e1e2e;
+      font-weight: 600; border: none; cursor: pointer; margin-left: 6px;
+    }}
+    button:hover {{ filter: brightness(1.08); }}
+    #status {{ color: #a6adc8; font-style: italic; margin-top: 12px; }}
+    .report-wrap {{ max-width: 960px; margin: 0 auto; }}
     </style>
     </head><body>
 
-    <!-- ===== Player Input Form ===== -->
-    <form id="playerForm">
-    <label for="playerInput"><b>Enter player name or number:</b></label><br>
-    <input type="text" id="playerInput" name="playerInput" placeholder="" style="width:250px;">
-    <button type="button" onclick="startAnalysis()">Run Analysis</button>
-    </form>
-
-    <div id="status"><i>Waiting for input...</i></div>
-
-    <script>
-    function startAnalysis() {{
-    var player = document.getElementById("playerInput").value;
-    document.getElementById("status").innerHTML =
-        "<b>Running analysis for " + player + "...</b><br><i>This is gonna take a while. Please wait.</i>";
-    }}
-    </script>
-
-    <!-- ===== Report Header ===== -->
     <h1>Bridge Performance Analysis for {target_name or f'Player #{target_ibfn}'}</h1>
     """
 
